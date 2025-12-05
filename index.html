@@ -1974,11 +1974,7 @@
     <input id="authPassword" type="password" class="auth-input" placeholder="Parol">
     <button id="authBtn" class="auth-btn">Kirish</button>
     <!-- Google Sign-In button (matches requested markup & classes) -->
-    <button type="submit" id="tpa-google-button" name="tpaProvider" value="google" class="pure-button sc-button items-2 sc-google sc-google-button" style="background:#fff;color:#111;margin-top:8px;border:1px solid #ddd;display:flex;align-items:center;justify-content:center;gap:10px">
-      <label class="offscreen">Sign in with Google</label>
-      <img src="https://www.gstatic.com/devrel-devsite/prod/vc6f2d4b1d1a8f6a6f0a7c4b2f7e1a4d4b7f6a0b6a6b6f0f6a6b6f0f6a6b6f0f6/svg/google.svg" alt="Google" style="width:18px;height:18px;margin-right:6px">
-      Continue with Google
-    </button>
+
     <div class="auth-toggle" id="toggleAuth">Yangi akkaunt yaratish</div>
     <div class="auth-toggle" id="forgotPass">Parolni unutdingizmi?</div>
   </div>
@@ -2257,13 +2253,14 @@ function setupAuthStateListener() {
       currentUserUID = user.uid;
       console.log('User authenticated:', user.email);
       
-      // Set user profile in state
+      // Set user profile in state (do not rely on provider displayName/photoURL)
+      const derivedName = (user && user.email) ? user.email.split('@')[0] : 'Anonymous';
       state.user = {
         id: user.uid,
-        name: user.displayName || 'Anonymous',
+        name: derivedName,
         email: user.email || '',
-        avatarLetter: (user.displayName || 'A')[0],
-        avatarUrl: user.photoURL || '',
+        avatarLetter: (derivedName || 'A')[0],
+        avatarUrl: '',
         bio: '',
         accountType: 'public',
         followers: 0,
@@ -2276,19 +2273,22 @@ function setupAuthStateListener() {
         userDataRef.once('value', (snapshot) => {
           if (snapshot.exists()) {
             const userData = snapshot.val();
+            state.user.name = userData.name || state.user.name;
             state.user.bio = userData.bio || '';
             state.user.accountType = userData.accountType || 'public';
             state.user.followers = userData.followers || 0;
             state.user.following = userData.following || 0;
+            state.user.avatarUrl = userData.avatarUrl || '';
+            state.user.avatarLetter = (state.user.name || 'A')[0];
             renderAll();
           } else {
             // Create user entry if doesn't exist
             const newUserData = {
               uid: user.uid,
-              name: user.displayName || 'Anonymous',
+              name: state.user.name,
               email: user.email || '',
               bio: '',
-              avatarUrl: user.photoURL || '',
+              avatarUrl: '',
               accountType: 'public',
               followers: 0,
               following: 0,
@@ -2302,7 +2302,7 @@ function setupAuthStateListener() {
       }
 
       // Set user as online in database
-      setUserOnline(user.uid, user.displayName || user.email || 'Anonymous');
+      setUserOnline(user.uid, state.user.name || user.email || 'Anonymous');
       
       // Set up presence system
       setupPresenceSystem(user.uid);
@@ -2707,42 +2707,8 @@ document.getElementById('authBtn').addEventListener('click',async ()=>{
   }
 });
 
-// Google button opens OAuth flow using Firebase
-// Firebase handles the entire OAuth exchange securely
-document.getElementById('tpa-google-button').addEventListener('click', async (e) => {
-  e.preventDefault();
-  try{
-    const googleProvider = new firebase.auth.GoogleAuthProvider();
-    googleProvider.setCustomParameters({ prompt: 'select_account' });
-    
-    // Sign in with Google popup
-    const result = await firebaseAuth.signInWithPopup(googleProvider);
-    const user = result.user;
-    
-    // User is now authenticated, setupAuthStateListener will handle the rest
-    console.log('Google Sign-In successful:', user.email);
-    
-  }catch(err){
-    // Handle specific Firebase auth errors
-    if(err && err.code === 'auth/configuration-not-found'){
-      const msg = 'Google Sign-In is not configured for this Firebase project.\n\n' +
-        'Fix: Open Firebase Console → Authentication → Sign-in method → Enable Google.\n' +
-        'Also configure OAuth consent screen and add your app domain (e.g., localhost) to Authorized domains.';
-      alert(msg);
-        try{ showAuthConfigBanner(msg); }catch(e){}
-      console.error('Google Sign-In configuration missing:', err);
-    }else if(err && err.code === 'auth/popup-blocked'){
-      alert('Popup blocked. Iltimos popup blocker-ni o\'chiring.');
-    }else if(err && err.code === 'auth/cancelled-popup-request'){
-      console.log('Google Sign-In cancelled by user');
-    }else if(err && err.code === 'auth/popup-closed-by-user'){
-      console.log('Google Sign-In popup closed');
-    }else{
-      console.error('Google Sign-In error:', err);
-      alert('Google Sign-In muvaffaqiyatsiz bo\'ldi. Iltimos qayta urinib ko\'ring.');
-    }
-  }
-});
+// Google Sign-In removed. Email/Password authentication is used exclusively now.
+// The `tpa-google-button` element and its handlers were removed.
 
 document.getElementById('forgotPass').addEventListener('click',async ()=>{
   // Prefer local stored user info for forgot password to avoid network errors
@@ -3590,19 +3556,12 @@ document.getElementById('searchInput').addEventListener('input',e=>{
 // Init - Check auth first (try server session, then fallback to localStorage)
 (async ()=>{
   const serverHas = await checkServerSession();
-  // If redirected back from Google OAuth with a failure, show helpful message
+  // No external OAuth redirects used; rely on Firebase Auth Email/Password flows only.
   try{
-    const params = new URLSearchParams(window.location.search);
-    if(params.get('google') === 'fail'){
-      document.getElementById('authError').innerText = 'Google Sign-In muvaffaqiyatsiz. Iltimos qayta urinib ko\'ring.';
-      showOfflineBanner();
-    }
-    if(params.get('google') === 'success'){
-      // clean up query string for nicer UX
-      const url = new URL(window.location.href);
-      url.searchParams.delete('google');
-      window.history.replaceState({}, document.title, url.toString());
-    }
+    // Clean up any irrelevant query params for nicer UX
+    const url = new URL(window.location.href);
+    url.searchParams.delete('google');
+    window.history.replaceState({}, document.title, url.toString());
   }catch(e){/* ignore URL parsing errors */}
   if(!serverHas){
     if(!loadAuthData()){
