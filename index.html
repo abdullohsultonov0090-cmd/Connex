@@ -1170,7 +1170,7 @@
     .theme-toggle {
       position: fixed;
       bottom: 20px;
-      right: 20px;
+      right: 1800px;
       width: 56px;
       height: 56px;
       border-radius: 50%;
@@ -1233,7 +1233,7 @@
       .btn { padding: 8px 12px; font-size: 12px; }
       .auth-container { padding: 28px 20px; max-width: 90%; }
       .settings-content { max-width: 90%; padding: 20px; }
-      .theme-toggle { width: 48px; height: 48px; font-size: 20px; bottom: 16px; right: 16px; }
+      .theme-toggle { width: 48px; height: 48px; font-size: 20px; bottom: 16px; right: 280px; }
     }
 
     /* ===== ACCESSIBILITY & TRANSITIONS ===== */
@@ -1875,6 +1875,78 @@
         height: 40px;
       }
     }
+
+    /* ===== ONLINE USERS INDICATOR ===== */
+    .online-users-indicator {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: linear-gradient(135deg, var(--success) 0%, #059669 100%);
+      color: white;
+      padding: 12px 16px;
+      border-radius: 50px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 13px;
+      box-shadow: var(--shadow-lg);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      backdrop-filter: blur(10px);
+      z-index: 50;
+      animation: slideInUp 0.4s ease-out;
+      cursor: pointer;
+      transition: all var(--transition-base);
+    }
+
+    .online-users-indicator:hover {
+      transform: translateY(-4px);
+      box-shadow: var(--shadow-xl);
+      background: linear-gradient(135deg, #059669 0%, #047857 100%);
+    }
+
+    .online-users-indicator .status-dot {
+      width: 8px;
+      height: 8px;
+      background: white;
+      border-radius: 50%;
+      animation: pulse-dot 2s infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.7); }
+      50% { box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.1); }
+    }
+
+    @keyframes slideInUp {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .online-users-indicator.updating {
+      animation: pulse-scale 0.6s ease-out;
+    }
+
+    @keyframes pulse-scale {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.1); }
+      100% { transform: scale(1); }
+    }
+
+    @media (max-width: 768px) {
+      .online-users-indicator {
+        bottom: 16px;
+        right: 16px;
+        padding: 10px 14px;
+        font-size: 12px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -1990,6 +2062,13 @@
     </nav>
   </div>
 </header>
+
+<!-- Online Users Indicator -->
+<div class="online-users-indicator" id="onlineUsersIndicator" title="Click for details">
+  <span class="status-dot"></span>
+  <span id="onlineCount">0</span>
+  <span>online</span>
+</div>
 
 <!-- Offline banner shown when backend is unreachable -->
 <div id="offlineBanner" style="display:none;position:fixed;top:72px;left:50%;transform:translateX(-50%);background:#fffbeb;color:#92400e;border:1px solid #f59e0b;padding:8px 12px;border-radius:8px;z-index:60;box-shadow:0 6px 18px rgba(0,0,0,0.08);font-weight:600">Tarmoq xatosi — serverga ulanish mumkin emas. Siz oflayn rejimda ishlayapsiz.</div>
@@ -2124,7 +2203,172 @@
   Connex © 2025
 </footer>
 
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-database.js"></script>
+
 <script>
+// ===== FIREBASE CONFIGURATION & INITIALIZATION =====
+// TODO: Replace these with your actual Firebase project credentials from Firebase Console
+const firebaseConfig = {
+  apiKey: process.env.FIREBASE_API_KEY || "YOUR_API_KEY",
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN || "your-project.firebaseapp.com",
+  databaseURL: process.env.FIREBASE_DATABASE_URL || "https://your-project.firebaseio.com",
+  projectId: process.env.FIREBASE_PROJECT_ID || "your-project-id",
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET || "your-project.appspot.com",
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || "123456789",
+  appId: process.env.FIREBASE_APP_ID || "1:123456789:web:abcdef123456"
+};
+
+// Initialize Firebase
+let firebaseApp = null;
+let firebaseAuth = null;
+let firebaseDatabase = null;
+let currentUserUID = null;
+let onlineUsersRef = null;
+
+function initializeFirebase() {
+  try {
+    firebaseApp = firebase.initializeApp(firebaseConfig);
+    firebaseAuth = firebase.auth();
+    firebaseDatabase = firebase.database();
+    
+    console.log('Firebase initialized successfully');
+    
+    // Set up authentication state listener
+    setupAuthStateListener();
+    
+    // Set up online users listener
+    setupOnlineUsersListener();
+  } catch (error) {
+    console.error('Firebase initialization error:', error);
+    showFirebaseConfigError();
+  }
+}
+
+function setupAuthStateListener() {
+  firebaseAuth.onAuthStateChanged((user) => {
+    if (user) {
+      currentUserUID = user.uid;
+      console.log('User authenticated:', user.email);
+      
+      // Set user as online in database
+      setUserOnline(user.uid, user.email || user.displayName || 'Anonymous');
+      
+      // Set up listener for user disconnect
+      setupPresenceSystem(user.uid);
+    } else {
+      currentUserUID = null;
+      console.log('User logged out');
+      // User will be removed from online users via disconnect listener
+    }
+  });
+}
+
+function setupPresenceSystem(uid) {
+  const userPresenceRef = firebaseDatabase.ref(`onlineUsers/${uid}`);
+  const connectedRef = firebaseDatabase.ref('.info/connected');
+  
+  connectedRef.on('value', (snapshot) => {
+    if (snapshot.val() === true) {
+      // Connected
+      userPresenceRef.set({
+        uid: uid,
+        lastSeen: firebase.database.ServerValue.TIMESTAMP,
+        status: 'online'
+      });
+      
+      // When user disconnects, remove them from online users
+      userPresenceRef.onDisconnect().remove().catch((error) => {
+        console.error('Error setting up disconnect handler:', error);
+      });
+    }
+  });
+}
+
+function setUserOnline(uid, userName) {
+  const userPresenceRef = firebaseDatabase.ref(`onlineUsers/${uid}`);
+  
+  userPresenceRef.set({
+    uid: uid,
+    name: userName,
+    status: 'online',
+    lastSeen: firebase.database.ServerValue.TIMESTAMP
+  }).catch((error) => {
+    console.error('Error setting user online:', error);
+  });
+}
+
+function setupOnlineUsersListener() {
+  onlineUsersRef = firebaseDatabase.ref('onlineUsers');
+  
+  onlineUsersRef.on('value', (snapshot) => {
+    const onlineUsers = snapshot.val();
+    const count = onlineUsers ? Object.keys(onlineUsers).length : 0;
+    updateOnlineUsersDisplay(count);
+  });
+}
+
+function updateOnlineUsersDisplay(count) {
+  const indicator = document.getElementById('onlineUsersIndicator');
+  const countEl = document.getElementById('onlineCount');
+  
+  if (!indicator || !countEl) return;
+
+  // Update count
+  const previousCount = parseInt(countEl.textContent) || 0;
+  countEl.textContent = count;
+
+  // Add pulse animation only if count changed
+  if (previousCount !== count) {
+    indicator.classList.add('updating');
+    setTimeout(() => {
+      indicator.classList.remove('updating');
+    }, 600);
+  }
+
+  // Log for debugging
+  console.log(`Online users: ${count}`);
+}
+
+function showFirebaseConfigError() {
+  const indicator = document.getElementById('onlineUsersIndicator');
+  if (indicator) {
+    indicator.style.display = 'none';
+  }
+  
+  console.error('⚠️ Firebase not configured! Please set your Firebase credentials in firebaseConfig.');
+  console.error('Get your credentials from: https://console.firebase.google.com/');
+}
+
+// Add click handler to show online users details (optional)
+document.addEventListener('DOMContentLoaded', () => {
+  const indicator = document.getElementById('onlineUsersIndicator');
+  if (indicator) {
+    indicator.addEventListener('click', showOnlineUsersDetails);
+  }
+  
+  // Initialize Firebase after page load
+  initializeFirebase();
+});
+
+function showOnlineUsersDetails() {
+  if (!onlineUsersRef) return;
+  
+  onlineUsersRef.once('value', (snapshot) => {
+    const onlineUsers = snapshot.val() || {};
+    const userList = Object.values(onlineUsers).map(u => u.name || 'Unknown').join(', ');
+    alert(`Online users (${Object.keys(onlineUsers).length}):\n\n${userList || 'No users online'}`);
+  });
+}
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', () => {
+  if (firebaseDatabase && currentUserUID) {
+    firebaseDatabase.ref(`onlineUsers/${currentUserUID}`).remove();
+  }
+});
+
 // === AUTHENTICATION SYSTEM ===
 let isSignupMode = false;
 let currentUser = null;

@@ -1,0 +1,42 @@
+{
+  "rules": {
+    "onlineUsers": {
+      "$uid": {
+        ".write": "auth.uid === $uid",
+        ".read": true,
+        "uid": {
+          ".validate": "newData.val() === auth.uid"
+        },
+        "name": {
+          ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 255"
+        },
+        "status": {
+          ".validate": "newData.val() === 'online'"
+        },
+        "lastSeen": {
+          ".validate": "newData.val() === now"
+        },
+        "$other": {
+          ".validate": "newData.isString() || newData.isNumber()"
+        }
+      }
+    },
+    "users": {
+      "$uid": {
+        ".write": "auth.uid === $uid",
+        ".read": true,
+        "uid": {
+          ".validate": "newData.val() === auth.uid"
+        },
+        "email": {
+          ".validate": "newData.isString() && newData.val().contains('@')"
+        },
+        "displayName": {
+          ".validate": "newData.isString() && newData.val().length > 0"
+        }
+      }
+    },
+    ".read": false,
+    ".write": false
+  }
+}
