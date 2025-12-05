@@ -2483,29 +2483,10 @@ document.getElementById('toggleAuth').addEventListener('click',()=>{
   document.getElementById('authError').innerText = '';
 });
 
-// Check server session via API; if logged in, use that user
+// DEPRECATED: Removed server session check - now using Firebase Auth exclusively
 async function checkServerSession(){
-  try{
-    const resp = await fetch('/api/user', { credentials: 'same-origin' });
-    if(resp.ok){
-      const json = await resp.json();
-      if(json && json.user){
-        currentUser = json.user;
-        saveAuthData();
-        hideAuthScreen();
-        serverAvailable = true;
-        hideOfflineBanner();
-        return true;
-      }
-    }
-    // If server responded but no user, ensure banner hidden
-    serverAvailable = true;
-    hideOfflineBanner();
-  }catch(e){
-    console.warn('Session check failed', e);
-    serverAvailable = false;
-    showOfflineBanner();
-  }
+  // Firebase Auth is the primary authentication method
+  // This function is kept for backwards compatibility but always returns false
   return false;
 }
 
