@@ -2211,9 +2211,9 @@
 <script>
 // ===== FIREBASE CONFIGURATION & INITIALIZATION =====
 // TODO: Replace these with your actual Firebase project credentials from Firebase Console
-
-import { initializeApp } from "firebase/app";
-import { getAnalytics } from "firebase/analytics";
+// Using the namespaced Firebase SDK loaded via the <script> tags above
+// (firebase-app.js, firebase-auth.js, firebase-database.js).
+// The app will be initialized using the global `firebase` object inside `initializeFirebase()`.
 
 const firebaseConfig = {
   apiKey: "AIzaSyAfN9TgARWGpt1L6Afe8Pn3wDjqm7JVF7w",
@@ -2225,13 +2225,7 @@ const firebaseConfig = {
   appId: "1:1058316675562:web:fb1e575139c06571bdaa93",
   measurementId: "G-JNC9P7CK3Z"
 };
-
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);
-
-
-// Initialize Firebase
+// Initialize Firebase placeholders
 let firebaseApp = null;
 let firebaseAuth = null;
 let firebaseDatabase = null;
