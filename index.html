@@ -2651,18 +2651,33 @@ document.getElementById('authBtn').addEventListener('click',async ()=>{
   }
 });
 
-// Google button opens OAuth flow
-// When the Google button is clicked we redirect to the server-side OAuth flow.
-// Passport handles the OAuth exchange server-side (more secure than exchanging tokens in the browser).
-document.getElementById('tpa-google-button').addEventListener('click', (e) => {
+// Google button opens OAuth flow using Firebase
+// Firebase handles the entire OAuth exchange securely
+document.getElementById('tpa-google-button').addEventListener('click', async (e) => {
   e.preventDefault();
   try{
-    // Redirect to server route which starts Google OAuth flow
-    window.location.href = '/auth/google';
+    const googleProvider = new firebase.auth.GoogleAuthProvider();
+    googleProvider.setCustomParameters({ prompt: 'select_account' });
+    
+    // Sign in with Google popup
+    const result = await firebaseAuth.signInWithPopup(googleProvider);
+    const user = result.user;
+    
+    // User is now authenticated, setupAuthStateListener will handle the rest
+    console.log('Google Sign-In successful:', user.email);
+    
   }catch(err){
-    // Friendly error if redirect fails (e.g., popup blockers or network)
-    console.error('Google Sign-In redirect failed', err);
-    alert('Google Sign-In boshlanmadi. Iltimos tarmoqni tekshiring va qayta urinib ko\'ring.');
+    // Handle specific Firebase auth errors
+    if(err.code === 'auth/popup-blocked'){
+      alert('Popup blocked. Iltimos popup blocker-ni o\'chiring.');
+    }else if(err.code === 'auth/cancelled-popup-request'){
+      console.log('Google Sign-In cancelled by user');
+    }else if(err.code === 'auth/popup-closed-by-user'){
+      console.log('Google Sign-In popup closed');
+    }else{
+      console.error('Google Sign-In error:', err);
+      alert('Google Sign-In muvaffaqiyatsiz bo\'ldi. Iltimos qayta urinib ko\'ring.');
+    }
   }
 });
 
