@@ -2210,15 +2210,25 @@
 <script>
 // ===== FIREBASE CONFIGURATION & INITIALIZATION =====
 // TODO: Replace these with your actual Firebase project credentials from Firebase Console
+
+import { initializeApp } from "firebase/app";
+import { getAnalytics } from "firebase/analytics";
+
 const firebaseConfig = {
-  apiKey: process.env.FIREBASE_API_KEY || "YOUR_API_KEY",
-  authDomain: process.env.FIREBASE_AUTH_DOMAIN || "your-project.firebaseapp.com",
-  databaseURL: process.env.FIREBASE_DATABASE_URL || "https://your-project.firebaseio.com",
-  projectId: process.env.FIREBASE_PROJECT_ID || "your-project-id",
-  storageBucket: process.env.FIREBASE_STORAGE_BUCKET || "your-project.appspot.com",
-  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || "123456789",
-  appId: process.env.FIREBASE_APP_ID || "1:123456789:web:abcdef123456"
+  apiKey: "AIzaSyAfN9TgARWGpt1L6Afe8Pn3wDjqm7JVF7w",
+  authDomain: "connex-2719a.firebaseapp.com",
+  databaseURL: "https://connex-2719a-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "connex-2719a",
+  storageBucket: "connex-2719a.firebasestorage.app",
+  messagingSenderId: "1058316675562",
+  appId: "1:1058316675562:web:fb1e575139c06571bdaa93",
+  measurementId: "G-JNC9P7CK3Z"
 };
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);
+
 
 // Initialize Firebase
 let firebaseApp = null;
