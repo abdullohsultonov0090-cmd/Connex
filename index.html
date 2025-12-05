@@ -2614,8 +2614,17 @@ document.getElementById('authBtn').addEventListener('click',async ()=>{
       // Auth state listener will handle showing the app
     }catch(e){
       console.error('Firebase login error:', e);
-      errorEl.innerText = e.message || 'Kirish muvaffaqiyatsiz';
-      
+      // Provide a clearer message for configuration errors
+      if(e && e.code === 'auth/configuration-not-found'){
+        const msg = 'Authentication is not configured for this Firebase project.\n\n' +
+          'Fix: Open Firebase Console → Authentication and enable Email/Password and/or Google sign-in.\n' +
+          'Also ensure your Web App (apiKey/projectId) matches the firebaseConfig in your app.';
+        alert(msg);
+        errorEl.innerText = 'Kirish muvaffaqiyatsiz: auth/configuration-not-found';
+      }else{
+        errorEl.innerText = e.message || 'Kirish muvaffaqiyatsiz';
+      }
+
       // Fallback to local storage for offline mode
       const fallback = localLogin(email,password);
       if(fallback.success){
@@ -2649,11 +2658,17 @@ document.getElementById('tpa-google-button').addEventListener('click', async (e)
     
   }catch(err){
     // Handle specific Firebase auth errors
-    if(err.code === 'auth/popup-blocked'){
+    if(err && err.code === 'auth/configuration-not-found'){
+      const msg = 'Google Sign-In is not configured for this Firebase project.\n\n' +
+        'Fix: Open Firebase Console → Authentication → Sign-in method → Enable Google.\n' +
+        'Also configure OAuth consent screen and add your app domain (e.g., localhost) to Authorized domains.';
+      alert(msg);
+      console.error('Google Sign-In configuration missing:', err);
+    }else if(err && err.code === 'auth/popup-blocked'){
       alert('Popup blocked. Iltimos popup blocker-ni o\'chiring.');
-    }else if(err.code === 'auth/cancelled-popup-request'){
+    }else if(err && err.code === 'auth/cancelled-popup-request'){
       console.log('Google Sign-In cancelled by user');
-    }else if(err.code === 'auth/popup-closed-by-user'){
+    }else if(err && err.code === 'auth/popup-closed-by-user'){
       console.log('Google Sign-In popup closed');
     }else{
       console.error('Google Sign-In error:', err);
