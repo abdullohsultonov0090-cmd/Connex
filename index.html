@@ -2204,9 +2204,9 @@
   Connex © 2025
 </footer>
 
-<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-database.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-database-compat.js"></script>
 
 <script>
 // ===== FIREBASE CONFIGURATION & INITIALIZATION =====
@@ -2252,20 +2252,80 @@ function initializeFirebase() {
 }
 
 function setupAuthStateListener() {
-  firebaseAuth.onAuthStateChanged((user) => {
+  firebaseAuth.onAuthStateChanged(async (user) => {
     if (user) {
       currentUserUID = user.uid;
       console.log('User authenticated:', user.email);
       
+      // Set user profile in state
+      state.user = {
+        id: user.uid,
+        name: user.displayName || 'Anonymous',
+        email: user.email || '',
+        avatarLetter: (user.displayName || 'A')[0],
+        avatarUrl: user.photoURL || '',
+        bio: '',
+        accountType: 'public',
+        followers: 0,
+        following: 0
+      };
+
+      // Try to load additional user data from database
+      if (firebaseDatabase) {
+        const userDataRef = firebaseDatabase.ref(`users/${user.uid}`);
+        userDataRef.once('value', (snapshot) => {
+          if (snapshot.exists()) {
+            const userData = snapshot.val();
+            state.user.bio = userData.bio || '';
+            state.user.accountType = userData.accountType || 'public';
+            state.user.followers = userData.followers || 0;
+            state.user.following = userData.following || 0;
+            renderAll();
+          } else {
+            // Create user entry if doesn't exist
+            const newUserData = {
+              uid: user.uid,
+              name: user.displayName || 'Anonymous',
+              email: user.email || '',
+              bio: '',
+              avatarUrl: user.photoURL || '',
+              accountType: 'public',
+              followers: 0,
+              following: 0,
+              createdAt: firebase.database.ServerValue.TIMESTAMP
+            };
+            firebaseDatabase.ref(`users/${user.uid}`).set(newUserData).catch(err => {
+              console.warn('Could not create user entry:', err);
+            });
+          }
+        });
+      }
+
       // Set user as online in database
-      setUserOnline(user.uid, user.email || user.displayName || 'Anonymous');
+      setUserOnline(user.uid, user.displayName || user.email || 'Anonymous');
       
-      // Set up listener for user disconnect
+      // Set up presence system
       setupPresenceSystem(user.uid);
+
+      // Set up real-time listeners
+      setupPostsListener();
+      setupUsersListener();
+      setupOnlineUsersListener();
+
+      // Show main app
+      hideAuthScreen();
+      state = loadState();
+      renderAll();
     } else {
       currentUserUID = null;
       console.log('User logged out');
-      // User will be removed from online users via disconnect listener
+      
+      // Tear down listeners
+      teardownPostsListener();
+      teardownUsersListener();
+
+      // Show auth screen
+      showAuthScreen();
     }
   });
 }
@@ -2507,43 +2567,57 @@ document.getElementById('authBtn').addEventListener('click',async ()=>{
   const errorEl = document.getElementById('authError');
   errorEl.innerText = '';
 
+  if (!firebaseAuth) {
+    errorEl.innerText = 'Firebase not initialized. Please refresh the page.';
+    return;
+  }
+
   if(isSignupMode){
     if(!name || !email || !password){
       errorEl.innerText = 'Barcha maydonlarni to\'ldiring!';
       return;
     }
     try{
-      const res = await fetch('/api/register',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        credentials: 'same-origin',
-        body: JSON.stringify({name,email,password})
-      });
-      const data = await res.json();
-      if(res.ok && data.user){
-        currentUser = data.user;
-        saveAuthData();
-        alert('Akkaunt yaratildi!');
-        hideAuthScreen();
-      }else{
-        errorEl.innerText = data.message || 'Ro\'yxatdan o\'tishda xatolik';
+      // Create user with Firebase Auth
+      const userCredential = await firebaseAuth.createUserWithEmailAndPassword(email, password);
+      const user = userCredential.user;
+
+      // Update display name
+      await user.updateProfile({ displayName: name });
+
+      // Create user entry in database
+      if (firebaseDatabase) {
+        await firebaseDatabase.ref(`users/${user.uid}`).set({
+          uid: user.uid,
+          name: name,
+          email: email,
+          bio: '',
+          avatarUrl: '',
+          accountType: 'public',
+          followers: 0,
+          following: 0,
+          createdAt: firebase.database.ServerValue.TIMESTAMP
+        });
       }
+
+      console.log('User created:', user.email);
+      alert('Akkaunt yaratildi!');
+      // Auth state listener will handle showing the app
     }catch(e){
-      console.warn('Register request failed, attempting local fallback', e);
+      console.error('Firebase signup error:', e);
+      errorEl.innerText = e.message || 'Ro\'yxatdan o\'tishda xatolik';
+      
+      // Fallback to local storage for offline mode
       const fallback = localRegister(name,email,password);
       if(fallback.success){
+        alert('Akkaunt yaratildi (oflayn rejim)');
         currentUser = { id: fallback.user.id, name: fallback.user.name, email: fallback.user.email, provider: 'local-fallback', avatarUrl: '' };
         saveAuthData();
-        alert('Akkaunt yaratildi (oflayn rejim)');
         hideAuthScreen();
         serverAvailable = false;
         showOfflineBanner();
-        // Update client state and UI for offline user
         state = loadState();
-        saveState();
         renderAll();
-      }else{
-        errorEl.innerText = fallback.message || 'Tarmoq xatosi';
       }
     }
   }else{
@@ -2552,36 +2626,26 @@ document.getElementById('authBtn').addEventListener('click',async ()=>{
       return;
     }
     try{
-      const res = await fetch('/api/login',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        credentials: 'same-origin',
-        body: JSON.stringify({email,password})
-      });
-      const data = await res.json();
-      if(res.ok && data.user){
-        currentUser = data.user;
-        saveAuthData();
-        alert('Kirish muvaffaqiyatli');
-        hideAuthScreen();
-      }else{
-        errorEl.innerText = data.message || 'Kirish muvaffaqiyatsiz';
-      }
+      // Sign in with Firebase Auth
+      const userCredential = await firebaseAuth.signInWithEmailAndPassword(email, password);
+      console.log('User signed in:', userCredential.user.email);
+      alert('Kirish muvaffaqiyatli');
+      // Auth state listener will handle showing the app
     }catch(e){
-      console.warn('Login request failed, attempting local fallback', e);
+      console.error('Firebase login error:', e);
+      errorEl.innerText = e.message || 'Kirish muvaffaqiyatsiz';
+      
+      // Fallback to local storage for offline mode
       const fallback = localLogin(email,password);
       if(fallback.success){
+        alert('Kirish muvaffaqiyatli (oflayn rejim)');
         currentUser = fallback.user;
         saveAuthData();
-        alert('Kirish muvaffaqiyatli (oflayn rejim)');
         hideAuthScreen();
         serverAvailable = false;
         showOfflineBanner();
         state = loadState();
-        saveState();
         renderAll();
-      }else{
-        errorEl.innerText = 'Tarmoq xatosi — ' + (fallback.message || '');
       }
     }
   }
@@ -2661,43 +2725,45 @@ document.getElementById('languageOpt').addEventListener('click',()=>{
   }
 });
 
-document.getElementById('logoutOpt').addEventListener('click',()=>{
+document.getElementById('logoutOpt').addEventListener('click',async ()=>{
   if(confirm('Chiqishni tasdiqlaysizmi?')){
-    localStorage.removeItem('connex_user');
-    currentUser = null;
-    showAuthScreen();
-    document.getElementById('settingsModal').style.display='none';
+    try {
+      if (firebaseAuth) {
+        await firebaseAuth.signOut();
+      }
+      localStorage.removeItem('connex_user');
+      currentUser = null;
+      showAuthScreen();
+      document.getElementById('settingsModal').style.display='none';
+    } catch (error) {
+      console.error('Logout error:', error);
+      alert('Failed to logout');
+    }
   }
 });
 
-// state is persisted in localStorage; load saved state or use defaults
+// Firebase-backed state - no more fake data
 function loadState(){
-  try{
-    const raw = localStorage.getItem('connex_state');
-    if(raw){
-      const parsed = JSON.parse(raw);
-      const userName = currentUser ? currentUser.name : 'Abdullox';
-      const userLetter = currentUser ? currentUser.avatarLetter : 'A';
-      parsed.user = parsed.user || {id:'u1',name:userName,avatarLetter:userLetter,avatarUrl:'',bio:'Salom!', accountType: 'public'};
-      parsed.profile = parsed.profile || { id:'u2', name:'Public Profile', email:'public@example.com', avatarLetter:'P', avatarUrl:'', bio:'This is the public profile.', followers: 123, following: 45, isFollowed:false };
-      parsed.posts = parsed.posts || [];
-      parsed.notifications = parsed.notifications || [];
-      parsed.messages = parsed.messages || [];
-      parsed.users = parsed.users || [{id:'u1',name:userName},{id:'u2',name:'Foydalanuvchi2'}];
-      return parsed;
-    }
-  }catch(e){
-    console.error('Failed to load state',e);
-  }
-  const userName = currentUser ? currentUser.name : 'Abdullox';
-  const userLetter = currentUser ? currentUser.avatarLetter : 'A';
-  return { user:{id:'u1',name:userName,avatarLetter:userLetter,avatarUrl:'',bio:'Salom!', accountType:'public'}, profile:{ id:'u2', name:'Public Profile', email:'public@example.com', avatarLetter:'P', avatarUrl:'', bio:'This is the public profile.', followers: 123, following: 45, isFollowed:false, accountType:'public' }, posts:[],notifications:[],messages:[],users:[{id:'u1',name:userName},{id:'u2',name:'Foydalanuvchi2'}] };
+  // Initialize with empty state; Firebase listeners will populate
+  return {
+    user: { id: '', name: '', email: '', avatarLetter: 'A', avatarUrl: '', bio: '', accountType: 'public', followers: 0, following: 0 },
+    profile: { id: '', name: '', email: '', avatarLetter: 'P', avatarUrl: '', bio: '', followers: 0, following: 0, isFollowed: false, accountType: 'public' },
+    posts: [],
+    notifications: [],
+    messages: [],
+    users: [],
+    conversations: [],
+    currentConversation: null
+  };
 }
 
 function saveState(){
+  // Don't save posts/notifications/messages to localStorage anymore
+  // Firebase listeners handle those. Only save user preferences if needed.
   try{
-    const toSave = {user:state.user, profile: state.profile, posts:state.posts,notifications:state.notifications,messages:state.messages,users:state.users};
-    localStorage.setItem('connex_state',JSON.stringify(toSave));
+    // Optional: save theme preference
+    const theme = document.documentElement.getAttribute('data-theme') || 'light';
+    localStorage.setItem('connex_theme', theme);
   }catch(e){console.error('Failed to save state',e)}
 }
 
@@ -2764,35 +2830,131 @@ function renderNotifications(){
   document.getElementById('notifCount').innerText = state.notifications.length>0?state.notifications.length:'0';
 }
 
-// Render posts (feed + profile)
+// Firebase Posts Real-Time Listener
+let postsListener = null;
+
+function setupPostsListener() {
+  if (!firebaseDatabase) {
+    console.warn('Firebase not initialized, skipping posts listener');
+    return;
+  }
+
+  // Set up real-time listener on /posts path
+  const postsRef = firebaseDatabase.ref('posts');
+  postsListener = postsRef.orderByChild('createdAt').on('value', (snapshot) => {
+    const data = snapshot.val() || {};
+    // Convert to array and reverse for newest first
+    state.posts = Object.keys(data)
+      .map(id => ({ id, ...data[id] }))
+      .reverse();
+    renderPosts();
+    renderNotifications();
+  });
+}
+
+function teardownPostsListener() {
+  if (postsListener && firebaseDatabase) {
+    firebaseDatabase.ref('posts').off('value', postsListener);
+    postsListener = null;
+  }
+}
+
+async function createPostFirebase(text) {
+  if (!firebaseDatabase || !currentUserUID || !text.trim()) return;
+
+  try {
+    const postId = firebaseDatabase.ref('posts').push().key;
+    const post = {
+      id: postId,
+      uid: currentUserUID,
+      userName: state.user.name || 'Anonymous',
+      text: text.trim(),
+      createdAt: firebase.database.ServerValue.TIMESTAMP,
+      updatedAt: firebase.database.ServerValue.TIMESTAMP,
+      likes: 0,
+      likedBy: [],
+      comments: [],
+      promoter: false // Allow admins to mark posts as promoted later
+    };
+
+    await firebaseDatabase.ref(`posts/${postId}`).set(post);
+    console.log('Post created:', postId);
+    document.getElementById('postText').value = '';
+  } catch (error) {
+    console.error('Error creating post:', error);
+    alert('Failed to create post. Please try again.');
+  }
+}
+
+async function deletePostFirebase(postId) {
+  if (!firebaseDatabase || !currentUserUID) return;
+
+  try {
+    const post = state.posts.find(p => p.id === postId);
+    if (!post || post.uid !== currentUserUID) {
+      alert('You can only delete your own posts');
+      return;
+    }
+
+    await firebaseDatabase.ref(`posts/${postId}`).remove();
+    console.log('Post deleted:', postId);
+  } catch (error) {
+    console.error('Error deleting post:', error);
+    alert('Failed to delete post');
+  }
+}
+
+async function likePostFirebase(postId) {
+  if (!firebaseDatabase || !currentUserUID) return;
+
+  try {
+    const post = state.posts.find(p => p.id === postId);
+    if (!post) return;
+
+    const alreadyLiked = post.likedBy && post.likedBy.includes(currentUserUID);
+    const newLikedBy = alreadyLiked
+      ? post.likedBy.filter(uid => uid !== currentUserUID)
+      : [...(post.likedBy || []), currentUserUID];
+
+    await firebaseDatabase.ref(`posts/${postId}`).update({
+      likes: newLikedBy.length,
+      likedBy: newLikedBy
+    });
+  } catch (error) {
+    console.error('Error liking post:', error);
+  }
+}
+
+// Render posts (updated to use Firebase data)
 function renderPosts(){
   const postsEl = document.getElementById('posts');
   const profilePostsEl = document.getElementById('profilePosts');
 
   function postHTML(p){
-    const user = state.users.find(u=>u.id===p.userId);
-    const likedByMe = p.likedBy.includes(state.user.id);
-    const commentCount = p.comments.length;
+    const user = state.users.find(u=>u.id===p.uid) || { name: p.userName || 'Unknown', avatarLetter: (p.userName || 'U')[0] };
+    const likedByMe = p.likedBy && p.likedBy.includes(currentUserUID);
+    const commentCount = (p.comments && p.comments.length) || 0;
+    
     return `
       <div class="post card" id="${p.id}">
         ${p.promoter?`<div class="promoter-badge">PROMOTER</div>`:''}
-        ${p.userId === state.user.id ? `<button class="delete-btn deletePostBtn" data-id="${p.id}" title="Delete post">✕</button>` : ''}
+        ${p.uid === currentUserUID ? `<button class="delete-btn deletePostBtn" data-id="${p.id}" title="Delete post">✕</button>` : ''}
         <div class="meta">
-          <div class="avatar">${user.name[0]}</div>
+          <div class="avatar">${user.avatarLetter}</div>
           <div><div style="font-weight:600">${user.name}</div></div>
         </div>
         <div class="content">${p.text}</div>
-        <div style="font-size:12px;color:#666;margin-top:6px">${formatTime(p.timestamp)}</div>
+        <div style="font-size:12px;color:#666;margin-top:6px">${formatTime(p.createdAt)}</div>
         <div class="controls" style="margin-top:8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap">
-          <button class="btn likeBtn" data-id="${p.id}" style="background:${likedByMe?'#ccc':'#1877f2'}">${likedByMe?'Liked':'Like'} (${p.likes})</button>
+          <button class="btn likeBtn" data-id="${p.id}" style="background:${likedByMe?'#ccc':'#1877f2'}">${likedByMe?'Liked':'Like'} (${p.likes || 0})</button>
           <button class="btn commentBtn" data-id="${p.id}">Comment (${commentCount})</button>
           <button class="btn shareBtn" data-id="${p.id}">Share</button>
         </div>
         <div class="commentArea" style="margin-top:8px; display:none; flex-direction:column; gap:6px">
-          ${p.comments.map(c=>{
-            const cUser = state.users.find(u=>u.id===c.userId);
+          ${(p.comments || []).map(c=>{
+            const cUser = state.users.find(u=>u.id===c.uid) || { name: 'Unknown', avatarLetter: 'U' };
             return `<div style="display:flex;align-items:center;gap:6px">
-                      <div class="avatar" style="width:24px;height:24px;font-size:12px;">${cUser.name[0]}</div>
+                      <div class="avatar" style="width:24px;height:24px;font-size:12px;">${cUser.avatarLetter}</div>
                       <div style="background:#f1f0f0;padding:4px 8px;border-radius:8px">${c.text}</div>
                     </div>`;
           }).join('')}
@@ -2802,19 +2964,12 @@ function renderPosts(){
   }
 
   postsEl.innerHTML = state.posts.map(postHTML).join('');
-  profilePostsEl.innerHTML = state.posts.filter(p=>p.userId===(state.profile && state.profile.id ? state.profile.id : state.user.id)).map(postHTML).join('');
+  profilePostsEl.innerHTML = state.posts.filter(p => p.uid === (state.profile && state.profile.id ? state.profile.id : currentUserUID)).map(postHTML).join('');
 
   // Like
   document.querySelectorAll('.likeBtn').forEach(btn=>{
     btn.addEventListener('click',()=>{
-      const post = state.posts.find(p=>p.id===btn.dataset.id);
-      if(post.userId === state.user.id) return;
-      if(!post.likedBy.includes(state.user.id)){
-        post.likes++;
-        post.likedBy.push(state.user.id);
-        saveState();
-        renderPosts();
-      }
+      likePostFirebase(btn.dataset.id);
     });
   });
 
@@ -2822,6 +2977,7 @@ function renderPosts(){
   document.querySelectorAll('.commentBtn').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const post = state.posts.find(p=>p.id===btn.dataset.id);
+      if(!post) return;
       const commentArea = document.getElementById(post.id).querySelector('.commentArea');
       if(commentArea.style.display==='none') commentArea.style.display='flex';
       if(commentArea.querySelector('input')) return;
@@ -2833,14 +2989,20 @@ function renderPosts(){
       input.style.border='1px solid #ccc';
       commentArea.appendChild(input);
 
-      input.addEventListener('keypress',e=>{
+      input.addEventListener('keypress',async (e)=>{
         if(e.key==='Enter' && input.value.trim()!==''){
-          post.comments.push({userId:state.user.id,text:input.value,timestamp:Date.now()});
+          const comment = {uid:currentUserUID, text:input.value.trim(), createdAt: firebase.database.ServerValue.TIMESTAMP};
+          const newComments = [...(post.comments || []), comment];
+          try {
+            await firebaseDatabase.ref(`posts/${post.id}/comments`).set(newComments);
+          } catch (err) {
+            console.error('Error adding comment:', err);
+          }
           input.remove();
-          saveState();
           renderPosts();
         }
       });
+      input.focus();
     });
   });
   
@@ -2852,40 +3014,58 @@ function renderPosts(){
     btn.addEventListener('click',()=>{
       const id = btn.dataset.id;
       if(!confirm('Delete this post?')) return;
-      const idx = state.posts.findIndex(p=>p.id===id);
-      if(idx>-1){
-        state.posts.splice(idx,1);
-        saveState();
-        renderPosts();
-        renderNotifications();
-      }
+      deletePostFirebase(id);
     });
   });
 }
 
-// ========== MODERN MESSAGES SYSTEM (Chat/DM) ==========
+// Setup real-time user list from Firebase (for messages, profiles, etc.)
+let usersListener = null;
+
+function setupUsersListener() {
+  if (!firebaseDatabase) return;
+
+  const usersRef = firebaseDatabase.ref('users');
+  usersListener = usersRef.on('value', (snapshot) => {
+    const data = snapshot.val() || {};
+    state.users = Object.keys(data)
+      .map(uid => ({
+        id: uid,
+        name: data[uid].name || 'Anonymous',
+        email: data[uid].email || '',
+        avatarLetter: (data[uid].name || 'A')[0],
+        avatarUrl: data[uid].avatarUrl || ''
+      }));
+    // Reinitialize conversations if users changed
+    if (state.conversations.length === 0) {
+      initializeConversations();
+    }
+  });
+}
+
+function teardownUsersListener() {
+  if (usersListener && firebaseDatabase) {
+    firebaseDatabase.ref('users').off('value', usersListener);
+    usersListener = null;
+  }
+}
 
 /**
- * Message structure:
- * { id, userId, text, timestamp, edited: false, deletedAt: null }
- */
-
-// Add conversations to state if not exists
-if (!state.conversations) state.conversations = [];
-if (!state.currentConversation) state.currentConversation = null;
-
-/**
- * Initialize conversations with sample users
+ * Initialize conversations with Firebase users
  */
 function initializeConversations() {
   if (state.conversations.length === 0) {
-    const sampleUsers = state.users.filter(u => u.id !== state.user.id).slice(0, 3);
+    // Get users from Firebase users array (populated by auth system)
+    const sampleUsers = (state.users || [])
+      .filter(u => u.id !== currentUserUID)
+      .slice(0, 3);
+    
     sampleUsers.forEach(user => {
       state.conversations.push({
         id: 'conv_' + user.id,
         userId: user.id,
-        userName: user.name,
-        avatarLetter: user.avatarLetter || user.name[0],
+        userName: user.name || 'Unknown',
+        avatarLetter: user.avatarLetter || (user.name ? user.name[0] : 'U'),
         messages: [],
         lastMessage: null,
         lastMessageTime: null,
@@ -3249,15 +3429,12 @@ document.getElementById('navMessages').addEventListener('click',()=>{
   document.getElementById('messagesArea').style.display='block';
 });
 
-document.getElementById('createPostBtn').addEventListener('click',()=>{
+document.getElementById('createPostBtn').addEventListener('click',async ()=>{
   const text = document.getElementById('postText').value.trim();
   if(text==='') return;
-  const id = 'p'+Date.now();
-  state.posts.unshift({id,userId:state.user.id,text,likes:0,likedBy:[],comments:[],timestamp:Date.now()});
-  document.getElementById('postText').value='';
-  saveState();
-  renderPosts();
-  renderNotifications();
+  
+  // Create post in Firebase
+  await createPostFirebase(text);
   
   // Generate sample notification for demonstration
   const randomNames = ['Ali', 'Fatima', 'Aziz', 'Leyla', 'Muhammad', 'Zainab'];
